@@ -4,6 +4,9 @@
 // Compatible GitHub Pages (100% client-side)
 // ============================================================
 
+import { initializeApp } from "firebase/app";
+import { getAnalytics } from "firebase/analytics";
+
 const APP_KEY = 'nexchat_v1';
 const BC = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('nexchat') : null;
 
@@ -16,14 +19,18 @@ let lastMessageId = {};
 
 // ===== STORAGE HELPERS =====
 const DB = {
-  get: (key, def = null) => {
-    try { return JSON.parse(localStorage.getItem(`${APP_KEY}_${key}`)) ?? def; }
-    catch { return def; }
+  apiKey: "AIzaSyA-tFXKuWSUvzt0WJEBfXxaDxC0ZyD0dY8",
+  authDomain: "nextschats.firebaseapp.com",
+  projectId: "nextschats",
+  storageBucket: "nextschats.firebasestorage.app",
+  messagingSenderId: "1046541879556",
+  appId: "1:1046541879556:web:de1c4b5f797daf95252851",
+  measurementId: "G-PJDXX0ZJ5V"
   },
-  set: (key, val) => {
-    try { localStorage.setItem(`${APP_KEY}_${key}`, JSON.stringify(val)); }
-    catch (e) { console.error('Storage error', e); }
-  },
+
+  const app = initializeApp(firebaseConfig);
+  const analytics = getAnalytics(app);
+
   users: () => DB.get('users', {}),
   groups: () => DB.get('groups', {}),
   messages: (id) => DB.get(`msgs_${id}`, []),
