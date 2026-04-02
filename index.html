@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NexChat — Messagerie Instantanée</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💬</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- AUTH SCREEN -->
+<div id="auth-screen" class="screen active">
+  <div class="auth-bg">
+    <div class="auth-orb orb1"></div>
+    <div class="auth-orb orb2"></div>
+    <div class="auth-orb orb3"></div>
+  </div>
+  <div class="auth-card">
+    <div class="auth-logo">
+      <div class="logo-icon">N</div>
+      <span class="logo-text">NexChat</span>
+    </div>
+    <p class="auth-subtitle">Messagerie temps réel entre appareils</p>
+
+    <div id="auth-login" class="auth-form">
+      <h2>Connexion</h2>
+      <input type="text" id="login-username" placeholder="Nom d'utilisateur" autocomplete="off">
+      <input type="password" id="login-password" placeholder="Mot de passe">
+      <button class="btn-primary" onclick="login()">Se connecter</button>
+      <p class="auth-switch">Pas de compte ? <a href="#" onclick="showRegister()">S'inscrire</a></p>
+    </div>
+
+    <div id="auth-register" class="auth-form hidden">
+      <h2>Inscription</h2>
+      <input type="text" id="reg-username" placeholder="Nom d'utilisateur" autocomplete="off">
+      <input type="text" id="reg-displayname" placeholder="Nom affiché">
+      <input type="password" id="reg-password" placeholder="Mot de passe">
+      <input type="password" id="reg-confirm" placeholder="Confirmer le mot de passe">
+      <button class="btn-primary" onclick="register()">Créer le compte</button>
+      <p class="auth-switch">Déjà un compte ? <a href="#" onclick="showLogin()">Se connecter</a></p>
+    </div>
+
+    <div id="auth-error" class="auth-error hidden"></div>
+  </div>
+</div>
+
+<!-- MAIN APP -->
+<div id="app-screen" class="screen">
+  <div class="app-layout">
+
+    <!-- SIDEBAR -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">
+          <div class="logo-icon small">N</div>
+          <span>NexChat</span>
+        </div>
+        <div class="sidebar-actions">
+          <button class="icon-btn" id="notif-btn" title="Notifications" onclick="toggleNotifications()">🔔</button>
+          <button class="icon-btn admin-only" onclick="showAdminPanel()" title="Panneau Admin" style="display:none;position:relative">
+            ⚙ <span id="admin-alert-dot" class="alert-dot hidden"></span>
+          </button>
+          <button class="icon-btn" onclick="logout()" title="Déconnexion">⏻</button>
+        </div>
+      </div>
+
+      <!-- USER PROFILE -->
+      <div class="user-profile" onclick="showProfile()">
+        <div class="avatar" id="sidebar-avatar">?</div>
+        <div class="user-info">
+          <span class="user-name" id="sidebar-username">Chargement...</span>
+          <span class="user-status online">● En ligne</span>
+        </div>
+        <div class="user-badge" id="admin-badge" style="display:none">ADMIN</div>
+      </div>
+
+      <!-- SEARCH -->
+      <div class="search-bar">
+        <span class="search-icon">⌕</span>
+        <input type="text" id="search-input" placeholder="Rechercher..." oninput="filterConversations(this.value)">
+      </div>
+
+      <!-- TABS -->
+      <div class="sidebar-tabs">
+        <button class="tab-btn active" onclick="switchTab('groups')" id="tab-groups">Groupes</button>
+        <button class="tab-btn" onclick="switchTab('private')" id="tab-private">Privés <span id="pm-badge" class="badge hidden">0</span></button>
+        <button class="tab-btn" onclick="switchTab('users')" id="tab-users">Membres</button>
+      </div>
+
+      <!-- GROUPS LIST -->
+      <div id="panel-groups" class="sidebar-panel">
+        <div class="panel-header">
+          <span>Groupes de discussion</span>
+          <button class="icon-btn small" onclick="showCreateGroup()" title="Créer un groupe" id="create-group-btn">+</button>
+        </div>
+        <div id="groups-list" class="conv-list"></div>
+      </div>
+
+      <!-- PRIVATE MESSAGES -->
+      <div id="panel-private" class="sidebar-panel hidden">
+        <div class="panel-header">
+          <span>Messages privés</span>
+          <button class="icon-btn small" onclick="showNewPM()" title="Nouveau message">+</button>
+        </div>
+        <div id="private-list" class="conv-list"></div>
+      </div>
+
+      <!-- USERS LIST -->
+      <div id="panel-users" class="sidebar-panel hidden">
+        <div class="panel-header">
+          <span>Tous les membres</span>
+          <button class="icon-btn small" id="report-btn-header" onclick="showReportModal()" title="Signaler un utilisateur" style="font-size:13px">🚩</button>
+        </div>
+        <div id="users-list" class="conv-list"></div>
+      </div>
+    </aside>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content">
+
+      <!-- WELCOME SCREEN -->
+      <div id="welcome-screen" class="welcome">
+        <div class="welcome-icon">💬</div>
+        <h2>Bienvenue sur NexChat</h2>
+        <p>Sélectionne un groupe ou un contact pour commencer à chatter</p>
+        <div class="welcome-stats" id="welcome-stats"></div>
+      </div>
+
+      <!-- CHAT AREA -->
+      <div id="chat-area" class="chat-area hidden">
+        <!-- CHAT HEADER -->
+        <div class="chat-header">
+          <button class="icon-btn mobile-back" onclick="hideChatMobile()">←</button>
+          <div class="chat-avatar" id="chat-avatar">?</div>
+          <div class="chat-info">
+            <h3 id="chat-name">Groupe</h3>
+            <span id="chat-meta">0 membres</span>
+          </div>
+          <div class="chat-actions">
+            <button class="icon-btn" onclick="toggleChatInfo()" title="Infos">ⓘ</button>
+            <button class="icon-btn admin-only hidden" id="manage-btn" onclick="showGroupManage()" title="Gérer">⚙</button>
+          </div>
+        </div>
+
+        <!-- MESSAGES -->
+        <div class="messages-container" id="messages-container">
+          <div id="messages-list"></div>
+          <div id="typing-indicator" class="typing-indicator hidden">
+            <span></span><span></span><span></span>
+          </div>
+        </div>
+
+        <!-- INPUT -->
+        <div class="message-input-area">
+          <div class="input-toolbar">
+            <button class="icon-btn" onclick="toggleEmoji()" title="Emoji">😊</button>
+          </div>
+          <div class="input-wrapper">
+            <textarea id="message-input" placeholder="Écrire un message..." rows="1"
+              oninput="autoResize(this); sendTyping()"
+              onkeydown="handleKey(event)"></textarea>
+          </div>
+          <button class="send-btn" onclick="sendMessage()" id="send-btn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <line x1="22" y1="2" x2="11" y2="13"></line>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+          </button>
+        </div>
+
+        <!-- EMOJI PICKER -->
+        <div id="emoji-picker" class="emoji-picker hidden">
+          <div class="emoji-grid" id="emoji-grid"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT PANEL (Chat Info) -->
+    <aside id="info-panel" class="info-panel hidden">
+      <div class="info-header">
+        <h3>Informations</h3>
+        <button class="icon-btn" onclick="toggleChatInfo()">✕</button>
+      </div>
+      <div id="info-content"></div>
+    </aside>
+  </div>
+</div>
+
+<!-- MODALS -->
+<div id="modal-overlay" class="modal-overlay hidden" onclick="closeModal()">
+  <div class="modal" id="modal-box" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modal-title">Modal</h3>
+      <button class="icon-btn" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modal-body" class="modal-body"></div>
+    <div id="modal-footer" class="modal-footer"></div>
+  </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast-container"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
