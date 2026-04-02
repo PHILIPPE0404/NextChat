@@ -440,6 +440,8 @@ function openChat(type, id, pmPartner = null) {
   currentChat = { type, id, pmPartner };
   markRead(`${type}_${id}`);
 
+  DB.listenChat(chatId);
+
   const chatArea = document.getElementById('chat-area');
   const welcomeScreen = document.getElementById('welcome-screen');
   chatArea.classList.remove('hidden');
