@@ -1484,8 +1484,17 @@ function saveProfile() {
 
 // ===== POLLING / REAL-TIME =====
 function startPolling() {
-  clearInterval(pollTimer);
-  pollTimer = setInterval(poll, 1000);
+  if (window.firebaseDB) {
+    firebaseDB.ref('/').on('value', () => {
+      if (currentChat) renderMessages();
+      renderGroups();
+      renderPrivateChats();
+    });
+  } else {
+    // fallback localStorage
+    clearInterval(pollTimer);
+    pollTimer = setInterval(poll, 1000);
+  }
 }
 
 function poll() {
