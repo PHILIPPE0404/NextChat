@@ -8,25 +8,6 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
-  <!-- Firebase SDK -->
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
-
-<script>
-    const firebaseConfig = {
-    apiKey: "AIzaSyA-tFXKuWSUvzt0WJEBfXxaDxC0ZyD0dY8",
-    authDomain: "nextschats.firebaseapp.com",
-    databaseURL: "https://nextschats.firebaseio.com",
-    projectId: "nextschats",
-    storageBucket: "nextschats.firebasestorage.app",
-    messagingSenderId: "1046541879556",
-    appId: "1:1046541879556:web:de1c4b5f797daf95252851",
-  };
-  firebase.initializeApp(firebaseConfig);
-  window.firebaseDB = firebase.database();
-</script>
-
-<script src="app.js"></script>
 <body>
 
 <!-- AUTH SCREEN -->
@@ -221,6 +202,24 @@
 
 <!-- TOAST -->
 <div id="toast-container"></div>
+
+<!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script>
+  const firebaseConfig = {
+    apiKey: "AIzaSyAB80vBG4swb-JhPyHxJAm4tE81TcwZTbM",
+    authDomain: "nextchat-ac47f.firebaseapp.com",
+    databaseURL: "https://nextchat-ac47f-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId: "nextchat-ac47f",
+    storageBucket: "nextchat-ac47f.firebasestorage.app",
+    messagingSenderId: "307797050278",
+    appId: "1:307797050278:web:0414f27f90d18a8309c567",
+    measurementId: "G-EPG911LHHK"
+  };
+  firebase.initializeApp(firebaseConfig);
+  window.FBDB = firebase.database();
+</script>
 
 <script src="app.js"></script>
 </body>
