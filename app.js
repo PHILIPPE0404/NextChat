@@ -1,75 +1,184 @@
 // ============================================================
-// NexChat - Application de chat temps réel
-// Communication via localStorage + BroadcastChannel
-// Compatible GitHub Pages (100% client-side)
+// NexChat — Backend Firebase Realtime Database
+// firebase SDK chargé dans index.html → window.FBDB
 // ============================================================
 
 const APP_KEY = 'nexchat_v1';
-const BC = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('nexchat') : null;
 
 // ===== STATE =====
 let currentUser = null;
-let currentChat = null; // { type: 'group'|'private', id: string }
+let currentChat = null;
 let typingTimer = null;
 let pollTimer = null;
-let lastMessageId = {};
 
-// ===== STORAGE HELPERS =====
+// ===== FIREBASE HELPERS =====
+// Toutes les données vivent dans Firebase.
+// On garde un cache mémoire local pour les lectures synchrones rapides.
+const _cache = {};
+
 const DB = {
-  get: (key, def = null) => { ... localStorage ... }
-    try { return JSON.parse(localStorage.getItem(`${APP_KEY}_${key}`)) ?? def; }
-    catch { return def; }
+  // Lecture depuis le cache mémoire (mis à jour par les listeners Firebase)
+  get: (key, def = null) => {
+    return _cache[key] !== undefined ? _cache[key] : def;
   },
-  set: (key, val) => { ... localStorage ... }
-    try { localStorage.setItem(`${APP_KEY}_${key}`, JSON.stringify(val)); }
-    catch (e) { console.error('Storage error', e); }
+
+  // Écriture : cache mémoire immédiat + Firebase en arrière-plan
+  set: (key, val) => {
+    _cache[key] = val;
+    if (window.FBDB) {
+      window.FBDB.ref(key).set(val)
+        .catch(e => console.error('Firebase write error:', key, e));
+    }
   },
-  users: () => DB.get('users', {}),
-  groups: () => DB.get('groups', {}),
+
+  // Raccourcis
+  users:    ()   => DB.get('users', {}),
+  groups:   ()   => DB.get('groups', {}),
   messages: (id) => DB.get(`msgs_${id}`, []),
+
   addMessage: (chatId, msg) => {
-    const msgs = DB.messages(chatId);
-    msgs.push(msg);
-    if (msgs.length > 500) msgs.splice(0, msgs.length - 500);
-    DB.set(`msgs_${chatId}`, msgs);
+    if (window.FBDB) {
+      // Push Firebase natif (clé auto, temps réel)
+      window.FBDB.ref(`msgs_${chatId}`).push(msg)
+        .catch(e => console.error('Firebase push error:', e));
+    } else {
+      const msgs = DB.messages(chatId);
+      msgs.push(msg);
+      DB.set(`msgs_${chatId}`, msgs);
+    }
   },
+
   typing: () => DB.get('typing', {}),
   setTyping: (chatId, username, ts) => {
-    const t = DB.typing();
+    const t = { ...DB.typing() };
     if (!t[chatId]) t[chatId] = {};
     t[chatId][username] = ts;
     DB.set('typing', t);
   },
   clearTyping: (chatId, username) => {
-    const t = DB.typing();
-    if (t[chatId]) { delete t[chatId][username]; DB.set('typing', t); }
+    const t = { ...DB.typing() };
+    if (t[chatId]) {
+      delete t[chatId][username];
+      DB.set('typing', t);
+    }
   },
+
   bans: () => DB.get('bans', {}),
   banUser: (username, reason, bannedBy) => {
-    const bans = DB.get('bans', {});
+    const bans = { ...DB.get('bans', {}) };
     bans[username] = { reason: reason || 'Aucune raison', bannedBy, bannedAt: Date.now() };
     DB.set('bans', bans);
   },
   unbanUser: (username) => {
-    const bans = DB.get('bans', {});
+    const bans = { ...DB.get('bans', {}) };
     delete bans[username];
     DB.set('bans', bans);
   },
-  isBanned: (username) => {
-    const bans = DB.get('bans', {});
-    return !!bans[username];
-  }
+  isBanned: (username) => !!DB.get('bans', {})[username]
 };
+
+// ===== FIREBASE LISTENERS =====
+// Écoute tous les chemins Firebase et met à jour le cache mémoire en temps réel
+function startFirebaseListeners() {
+  if (!window.FBDB) return;
+  const db = window.FBDB;
+
+  const paths = ['users', 'groups', 'bans', 'typing', 'reports'];
+
+  paths.forEach(path => {
+    db.ref(path).on('value', snap => {
+      _cache[path] = snap.val() || (path === 'reports' ? [] : {});
+      refreshUI();
+    });
+  });
+
+  // Écoute les messages du chat courant
+  listenCurrentChat();
+}
+
+let _chatListener = null;
+let _chatListenerPath = null;
+
+function listenCurrentChat() {
+  if (!window.FBDB || !currentChat) return;
+  const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
+
+  // Détache l'ancien listener
+  if (_chatListenerPath && _chatListener) {
+    window.FBDB.ref(_chatListenerPath).off('value', _chatListener);
+  }
+
+  _chatListenerPath = chatId;
+  _chatListener = window.FBDB.ref(chatId).on('value', snap => {
+    const raw = snap.val();
+    // Firebase push() stocke les messages comme objet {key: msg} → on convertit en tableau
+    _cache[chatId] = raw ? Object.values(raw).sort((a, b) => a.timestamp - b.timestamp) : [];
+    renderMessages();
+    markRead(chatId);
+  });
+}
+
+function refreshUI() {
+  if (currentUser) {
+    renderGroups();
+    renderPrivateChats();
+    renderUsers();
+    updateWelcomeStats();
+    updateAdminAlertDot();
+  }
+}
 
 // ===== INIT =====
 function init() {
-  initDefaultData();
+  // Abonne les listeners Firebase avant tout
+  startFirebaseListeners();
+
+  // Attendre que Firebase charge les données initiales
+  if (window.FBDB) {
+    showLoadingScreen();
+    // On attend le premier snapshot 'users' pour savoir si la DB est vide
+    window.FBDB.ref('users').once('value').then(snap => {
+      _cache['users'] = snap.val() || {};
+      window.FBDB.ref('groups').once('value').then(snapG => {
+        _cache['groups'] = snapG.val() || {};
+        initDefaultData();
+        checkSession();
+        hideLoadingScreen();
+      });
+    }).catch(() => {
+      initDefaultData();
+      checkSession();
+      hideLoadingScreen();
+    });
+  } else {
+    initDefaultData();
+    checkSession();
+  }
+}
+
+function showLoadingScreen() {
+  let el = document.getElementById('loading-screen');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'loading-screen';
+    el.style.cssText = 'position:fixed;inset:0;background:var(--bg,#0a0a0f);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:16px;color:#9999b0;font-family:sans-serif';
+    el.innerHTML = '<div style="font-size:36px">💬</div><div style="font-size:14px">Connexion à Firebase...</div><div style="width:40px;height:40px;border:3px solid #2a2a38;border-top-color:#6c63ff;border-radius:50%;animation:spin 0.8s linear infinite"></div><style>@keyframes spin{to{transform:rotate(360deg)}}</style>';
+    document.body.appendChild(el);
+  }
+}
+
+function hideLoadingScreen() {
+  const el = document.getElementById('loading-screen');
+  if (el) el.remove();
+}
+
+function checkSession() {
   const saved = sessionStorage.getItem('nexchat_session');
   if (saved) {
-    currentUser = JSON.parse(saved);
+    const s = JSON.parse(saved);
     const users = DB.users();
-    if (users[currentUser.username]) {
-      currentUser = users[currentUser.username];
+    if (users[s.username]) {
+      currentUser = users[s.username];
       sessionStorage.setItem('nexchat_session', JSON.stringify(currentUser));
       enterApp();
       return;
@@ -77,6 +186,7 @@ function init() {
   }
   showAuth();
 }
+
 
 function initDefaultData() {
   const users = DB.users();
@@ -455,6 +565,7 @@ function openChat(type, id, pmPartner = null) {
   }
 
   renderMessages();
+  listenCurrentChat(); // 🔥 Firebase listener sur ce chat
   updateActiveConv();
   document.getElementById('message-input').focus();
   closeInfoPanel();
@@ -472,8 +583,8 @@ function updateActiveConv() {
 
 function renderMessages() {
   if (!currentChat) return;
-  const chatId = `${currentChat.type}_${currentChat.id}`;
-  const msgs = DB.messages(chatId);
+  const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
+  const msgs = _cache[chatId] || [];
   const container = document.getElementById('messages-list');
   container.innerHTML = '';
 
@@ -588,7 +699,7 @@ function sendMessage() {
   const content = input.value.trim();
   if (!content) return;
 
-  const chatId = `${currentChat.type}_${currentChat.id}`;
+  const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
   const msg = {
     id: genId(),
     sender: currentUser.username,
@@ -597,15 +708,11 @@ function sendMessage() {
     reactions: {}
   };
 
-  DB.addMessage(chatId, msg);
+  DB.addMessage(chatId, msg); // push Firebase natif
   input.value = '';
   input.style.height = 'auto';
   DB.clearTyping(chatId, currentUser.username);
-
-  renderMessages();
-  broadcast({ type: 'new_message', chatId, msg });
-  renderGroups();
-  renderPrivateChats();
+  // Le listener Firebase met à jour renderMessages automatiquement
 }
 
 function handleKey(e) {
@@ -633,15 +740,18 @@ function sendTyping() {
 
 function deleteMessage(msgId) {
   if (!currentChat) return;
-  const chatId = `${currentChat.type}_${currentChat.id}`;
-  const msgs = DB.messages(chatId);
-  const idx = msgs.findIndex(m => m.id === msgId);
-  if (idx === -1) return;
-  if (msgs[idx].sender !== currentUser.username && currentUser.role !== 'admin') return;
-  msgs.splice(idx, 1);
-  DB.set(`msgs_${chatId}`, msgs);
-  renderMessages();
-  broadcast({ type: 'message_deleted', chatId, msgId });
+  const fbChatId = `msgs_${currentChat.type}_${currentChat.id}`;
+  const msgs = _cache[fbChatId] || [];
+  const msg = msgs.find(m => m.id === msgId);
+  if (!msg) return;
+  if (msg.sender !== currentUser.username && currentUser.role !== 'admin') return;
+
+  if (window.FBDB) {
+    // Cherche la clé Firebase du message (format push)
+    window.FBDB.ref(fbChatId).orderByChild('id').equalTo(msgId).once('value', snap => {
+      snap.forEach(child => child.ref.remove());
+    });
+  }
 }
 
 function addReaction(msgId) {
@@ -661,22 +771,20 @@ function addReaction(msgId) {
 }
 
 function addReactionEmoji(msgId, emoji) {
-  if (!currentChat) return;
-  const chatId = `${currentChat.type}_${currentChat.id}`;
-  const msgs = DB.messages(chatId);
-  const msg = msgs.find(m => m.id === msgId);
-  if (!msg) return;
-  if (!msg.reactions) msg.reactions = {};
-
-  if (msg.reactions[currentUser.username] === emoji) {
-    delete msg.reactions[currentUser.username];
-  } else {
-    msg.reactions[currentUser.username] = emoji;
-  }
-
-  DB.set(`msgs_${chatId}`, msgs);
-  renderMessages();
-  broadcast({ type: 'reaction', chatId, msgId, username: currentUser.username, emoji });
+  if (!currentChat || !window.FBDB) return;
+  const fbChatId = `msgs_${currentChat.type}_${currentChat.id}`;
+  window.FBDB.ref(fbChatId).orderByChild('id').equalTo(msgId).once('value', snap => {
+    snap.forEach(child => {
+      const msg = child.val();
+      const reactions = msg.reactions || {};
+      if (reactions[currentUser.username] === emoji) {
+        delete reactions[currentUser.username];
+      } else {
+        reactions[currentUser.username] = emoji;
+      }
+      child.ref.update({ reactions });
+    });
+  });
 }
 
 // ===== EMOJI PICKER =====
@@ -1482,88 +1590,40 @@ function saveProfile() {
   broadcast({ type: 'profile_updated', username: currentUser.username });
 }
 
-// ===== POLLING / REAL-TIME =====
+// ===== REAL-TIME TYPING INDICATOR =====
+// Firebase gère le temps réel — on garde juste un timer pour afficher l'indicateur
 function startPolling() {
-  if (window.firebaseDB) {
-    firebaseDB.ref('/').on('value', () => {
-      if (currentChat) renderMessages();
-      renderGroups();
-      renderPrivateChats();
-    });
-  } else {
-    // fallback localStorage
-    clearInterval(pollTimer);
-    pollTimer = setInterval(poll, 1000);
-  }
-}
-
-function poll() {
-  if (!currentChat) {
-    renderGroups();
-    renderPrivateChats();
-    return;
-  }
-
-  const chatId = `${currentChat.type}_${currentChat.id}`;
-  const msgs = DB.messages(chatId);
-  const lastRendered = document.getElementById('messages-list').children.length;
-  const lastKnown = lastMessageId[chatId] || 0;
-  const latestMsg = msgs[msgs.length - 1];
-
-  if (latestMsg && latestMsg.timestamp !== lastKnown) {
-    lastMessageId[chatId] = latestMsg?.timestamp;
-    renderMessages();
-    markRead(chatId);
-  }
-
-  // Check typing
-  const typing = DB.typing();
-  const chatTyping = typing[chatId] || {};
-  const now = Date.now();
-  const others = Object.entries(chatTyping)
-    .filter(([u, ts]) => u !== currentUser.username && now - ts < 2000)
-    .map(([u]) => getDisplayName(u));
-
-  const indicator = document.getElementById('typing-indicator');
-  if (others.length > 0) {
-    indicator.classList.remove('hidden');
-    scrollToBottom();
-  } else {
-    indicator.classList.add('hidden');
-  }
-
-  renderGroups();
-  renderPrivateChats();
-}
-
-// BroadcastChannel for same-device multi-tab
-if (BC) {
-  BC.onmessage = (e) => {
-    const { type, chatId } = e.data;
-    if (currentChat && chatId === `${currentChat.type}_${currentChat.id}`) {
-      renderMessages();
+  clearInterval(pollTimer);
+  // Vérifie l'indicateur de frappe toutes les 500ms (léger)
+  pollTimer = setInterval(() => {
+    if (!currentChat) return;
+    const chatId = `${currentChat.type}_${currentChat.id}`;
+    const typing = DB.typing();
+    const chatTyping = typing[chatId] || {};
+    const now = Date.now();
+    const others = Object.entries(chatTyping)
+      .filter(([u, ts]) => u !== currentUser.username && now - ts < 2000)
+      .map(([u]) => getDisplayName(u));
+    const indicator = document.getElementById('typing-indicator');
+    if (others.length > 0) {
+      indicator.classList.remove('hidden');
+      scrollToBottom();
+    } else {
+      indicator.classList.add('hidden');
     }
-    renderGroups();
-    renderPrivateChats();
-    renderUsers();
-    updateWelcomeStats();
-  };
+  }, 500);
 }
 
-function broadcast(data) {
-  if (BC) BC.postMessage(data);
-  // Also trigger storage event for cross-tab
-  try { localStorage.setItem('nexchat_ping', Date.now()); } catch {}
-}
+function broadcast() {} // No-op : Firebase gère la sync en temps réel
 
 // ===== READ STATUS =====
 const READ_KEY = 'reads';
 function getReads() { return DB.get(READ_KEY, {}); }
 
 function markRead(chatId) {
-  const reads = getReads();
-  const msgs = DB.messages(chatId);
+  const msgs = _cache[chatId] || [];
   if (msgs.length > 0) {
+    const reads = { ...getReads() };
     if (!reads[currentUser.username]) reads[currentUser.username] = {};
     reads[currentUser.username][chatId] = msgs[msgs.length - 1].timestamp;
     DB.set(READ_KEY, reads);
