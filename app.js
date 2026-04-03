@@ -629,7 +629,6 @@ function renderMessageGroup(group) {
     return el;
   }
 
-  // Pour les messages normaux
   if (group.type === 'msg') {
     const container = document.createElement('div');
     container.className = 'msg-group';
@@ -644,7 +643,6 @@ function renderMessageGroup(group) {
     return container;
   }
 }
-
   const users = DB.users();
   const sender = users[group.sender];
   const isOwn = group.sender === currentUser.username;
