@@ -717,6 +717,16 @@ function sendMessage() {
     reactions: {}
   };
 
+  DB.addMessage(chatId, msg);
+
+  // ✅ AJOUTE ÇA (FIX PRINCIPAL)
+  displayMessage(msg);
+
+  input.value = '';
+  input.style.height = 'auto';
+  DB.clearTyping(chatId, currentUser.username);
+}
+
   DB.addMessage(chatId, msg); // push Firebase natif
   input.value = '';
   input.style.height = 'auto';
