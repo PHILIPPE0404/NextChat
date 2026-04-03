@@ -1,3 +1,4 @@
+//0
 // ============================================================
 // NexChat — Backend Firebase Realtime Database
 // firebase SDK chargé dans index.html → window.FBDB
