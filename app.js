@@ -276,11 +276,20 @@ function login() {
   if (!user) return showAuthError('Utilisateur introuvable');
   if (user.password !== btoa(password)) return showAuthError('Mot de passe incorrect');
 
-  // Vérification ban
-  if (DB.isBanned(username)) {
-    const ban = DB.bans()[username];
-    return showAuthError(`🚫 Compte banni — Raison : ${ban.reason}`);
-  }
+if (DB.isBanned(username)) {
+  const ban = DB.bans()[username];
+
+  // cacher login
+  document.getElementById("auth-screen").classList.add("hidden");
+
+  // afficher écran de ban
+  document.getElementById("ban-screen").classList.remove("hidden");
+
+  document.getElementById("ban-reason").innerText =
+    ban.reason || "Aucune raison";
+
+  return;
+}
 
   currentUser = user;
   sessionStorage.setItem('nexchat_session', JSON.stringify(user));
