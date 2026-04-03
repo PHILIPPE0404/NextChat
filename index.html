@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="fr">
-<script type="module" src="app.js"></script>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,6 +8,25 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
+  <!-- Firebase SDK -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+
+<script>
+    const firebaseConfig = {
+    apiKey: "AIzaSyA-tFXKuWSUvzt0WJEBfXxaDxC0ZyD0dY8",
+    authDomain: "nextschats.firebaseapp.com",
+    databaseURL: "https://nextschats.firebaseio.com",
+    projectId: "nextschats",
+    storageBucket: "nextschats.firebasestorage.app",
+    messagingSenderId: "1046541879556",
+    appId: "1:1046541879556:web:de1c4b5f797daf95252851",
+  };
+  firebase.initializeApp(firebaseConfig);
+  window.firebaseDB = firebase.database();
+</script>
+
+<script src="app.js"></script>
 <body>
 
 <!-- AUTH SCREEN -->
@@ -203,26 +221,6 @@
 
 <!-- TOAST -->
 <div id="toast-container"></div>
-
-<script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
-<script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-database-compat.js"></script>
-
-<script>
-  // Remplacez par vos informations trouvées dans la console Firebase
-  const firebaseConfig = {
-    apiKey: "AIzaSyA-tFXKuWSUvzt0WJEBfXxaDxC0ZyD0dY8",
-    authDomain: "nextschats.firebaseapp.com",
-    databaseURL: "https://nextschats.firebaseio.com",
-    projectId: "nextschats",
-    storageBucket: "nextschats.firebasestorage.app",
-    messagingSenderId: "1046541879556",
-    appId: "1:1046541879556:web:de1c4b5f797daf95252851",
-  };
-
-  // Initialisation de la connexion
-  firebase.initializeApp(firebaseConfig);
-  const database = firebase.database();
-</script>
 
 <script src="app.js"></script>
 </body>
