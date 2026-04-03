@@ -628,6 +628,22 @@ function renderMessageGroup(group) {
     return el;
   }
 
+  // Pour les messages normaux
+  if (group.type === 'msg') {
+    const container = document.createElement('div');
+    container.className = 'msg-group';
+
+    group.msgs.forEach(msg => {
+      const el = document.createElement('div');
+      el.className = 'msg';
+      el.textContent = `${msg.sender}: ${msg.content}`;
+      container.appendChild(el);
+    });
+
+    return container;
+  }
+}
+
   const users = DB.users();
   const sender = users[group.sender];
   const isOwn = group.sender === currentUser.username;
