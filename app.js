@@ -1,4 +1,4 @@
-//0
+//1
 // ============================================================
 // NexChat — Backend Firebase Realtime Database
 // firebase SDK chargé dans index.html → window.FBDB
@@ -716,12 +716,13 @@ function sendMessage() {
 
   const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
   const msg = {
-    id: genId(),
-    sender: currentUser.username,
-    content,
-    timestamp: Date.now(),
-    reactions: {}
-  };
+  id: genId(),
+  sender: currentUser.username,
+  content,
+  timestamp: Date.now(),
+  type: 'msg',       // ← ajouté
+  reactions: {}
+};
 
   DB.addMessage(chatId, msg); // push Firebase natif
   input.value = '';
