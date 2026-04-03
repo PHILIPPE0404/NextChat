@@ -1188,7 +1188,7 @@ function showAdminPanel() {
 
     <!-- USERS TAB -->
     <div id="admin-tab-users" class="admin-tab-content">
-      ${Object.values(users).map(u => {
+      ${Object.values(users).map(u => {&
         const isBanned = !!bans[u.username];
         const isSelf = u.username === currentUser.username;
         return `
