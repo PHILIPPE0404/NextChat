@@ -276,20 +276,11 @@ function login() {
   if (!user) return showAuthError('Utilisateur introuvable');
   if (user.password !== btoa(password)) return showAuthError('Mot de passe incorrect');
 
-if (DB.isBanned(username)) {
-  const ban = DB.bans()[username];
-
-  // cacher login
-  document.getElementById("auth-screen").classList.add("hidden");
-
-  // afficher écran de ban
-  document.getElementById("ban-screen").classList.remove("hidden");
-
-  document.getElementById("ban-reason").innerText =
-    ban.reason || "Aucune raison";
-
-  return;
-}
+  // Vérification ban
+  if (DB.isBanned(username)) {
+    const ban = DB.bans()[username];
+    return showAuthError(`🚫 Compte banni — Raison : ${ban.reason}`);
+  }
 
   currentUser = user;
   sessionStorage.setItem('nexchat_session', JSON.stringify(user));
@@ -716,16 +707,6 @@ function sendMessage() {
     timestamp: Date.now(),
     reactions: {}
   };
-
-  DB.addMessage(chatId, msg);
-
-  // ✅ AJOUTE ÇA (FIX PRINCIPAL)
-  displayMessage(msg);
-
-  input.value = '';
-  input.style.height = 'auto';
-  DB.clearTyping(chatId, currentUser.username);
-}
 
   DB.addMessage(chatId, msg); // push Firebase natif
   input.value = '';
@@ -1188,7 +1169,7 @@ function showAdminPanel() {
 
     <!-- USERS TAB -->
     <div id="admin-tab-users" class="admin-tab-content">
-      ${Object.values(users).map(u => {&
+      ${Object.values(users).map(u => {
         const isBanned = !!bans[u.username];
         const isSelf = u.username === currentUser.username;
         return `
