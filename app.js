@@ -1,4 +1,4 @@
-//1
+//version finale
 // ============================================================
 // NexChat — Backend Firebase Realtime Database
 // firebase SDK chargé dans index.html → window.FBDB
@@ -39,13 +39,13 @@ const DB = {
 
   addMessage: (chatId, msg) => {
     if (window.FBDB) {
-      // Push Firebase natif (clé auto, temps réel)
-      window.FBDB.ref(`msgs_${chatId}`).push(msg)
+      // chatId est déjà le chemin complet ex: msgs_group_general
+      window.FBDB.ref(chatId).push(msg)
         .catch(e => console.error('Firebase push error:', e));
     } else {
-      const msgs = DB.messages(chatId);
+      const msgs = _cache[chatId] || [];
       msgs.push(msg);
-      DB.set(`msgs_${chatId}`, msgs);
+      _cache[chatId] = msgs;
     }
   },
 
@@ -230,7 +230,7 @@ function initDefaultData() {
     DB.set('groups', groups);
 
     // Welcome message
-    DB.addMessage('group_general', {
+    DB.addMessage('msgs_group_general', {
       id: genId(),
       type: 'system',
       content: '👋 Bienvenue sur NexChat ! Créez un compte pour commencer à chatter.',
@@ -394,9 +394,10 @@ function renderGroups(filter = '') {
   }
 
   for (const g of myGroups) {
-    const msgs = DB.messages(`group_${g.id}`);
+    const fbChatId = `msgs_group_${g.id}`;
+    const msgs = _cache[fbChatId] || [];
     const lastMsg = msgs.filter(m => m.type !== 'system').slice(-1)[0];
-    const unread = getUnreadCount(`group_${g.id}`);
+    const unread = getUnreadCount(fbChatId);
 
     const item = document.createElement('div');
     item.className = `conv-item ${currentChat?.type === 'group' && currentChat?.id === g.id ? 'active' : ''}`;
@@ -421,11 +422,11 @@ function renderPrivateChats(filter = '') {
   const container = document.getElementById('private-list');
   container.innerHTML = '';
 
-  // Find all users we have PM history with
+  // Trouve tous les PM depuis le cache Firebase (_cache contient les clés msgs_private_xxx)
   const pmUsers = new Set();
-  for (const key of Object.keys(localStorage)) {
-    if (key.startsWith(`${APP_KEY}_msgs_private_`)) {
-      const parts = key.replace(`${APP_KEY}_msgs_private_`, '').split('_');
+  for (const key of Object.keys(_cache)) {
+    if (key.startsWith('msgs_private_')) {
+      const parts = key.replace('msgs_private_', '').split('_');
       if (parts.includes(currentUser.username)) {
         parts.forEach(u => { if (u !== currentUser.username) pmUsers.add(u); });
       }
@@ -447,9 +448,10 @@ function renderPrivateChats(filter = '') {
     const user = users[username];
     if (!user) continue;
     const pmId = getPMId(currentUser.username, username);
-    const msgs = DB.messages(`private_${pmId}`);
+    const fbChatId = `msgs_private_${pmId}`;
+    const msgs = _cache[fbChatId] || [];
     const lastMsg = msgs.slice(-1)[0];
-    const unread = getUnreadCount(`private_${pmId}`);
+    const unread = getUnreadCount(fbChatId);
     totalUnread += unread;
 
     const item = document.createElement('div');
@@ -533,7 +535,7 @@ function filterConversations(val) {
 // ===== CHAT =====
 function openChat(type, id, pmPartner = null) {
   currentChat = { type, id, pmPartner };
-  markRead(`${type}_${id}`);
+  markRead(`msgs_${type}_${id}`);
 
   const chatArea = document.getElementById('chat-area');
   const welcomeScreen = document.getElementById('welcome-screen');
@@ -629,20 +631,6 @@ function renderMessageGroup(group) {
     return el;
   }
 
-  if (group.type === 'msg') {
-    const container = document.createElement('div');
-    container.className = 'msg-group';
-
-    group.msgs.forEach(msg => {
-      const el = document.createElement('div');
-      el.className = 'msg';
-      el.textContent = `${msg.sender}: ${msg.content}`;
-      container.appendChild(el);
-    });
-
-    return container;
-  }
-}
   const users = DB.users();
   const sender = users[group.sender];
   const isOwn = group.sender === currentUser.username;
@@ -716,13 +704,12 @@ function sendMessage() {
 
   const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
   const msg = {
-  id: genId(),
-  sender: currentUser.username,
-  content,
-  timestamp: Date.now(),
-  type: 'msg',       // ← ajouté
-  reactions: {}
-};
+    id: genId(),
+    sender: currentUser.username,
+    content,
+    timestamp: Date.now(),
+    reactions: {}
+  };
 
   DB.addMessage(chatId, msg); // push Firebase natif
   input.value = '';
@@ -747,7 +734,6 @@ function sendTyping() {
   if (!currentChat) return;
   const chatId = `${currentChat.type}_${currentChat.id}`;
   DB.setTyping(chatId, currentUser.username, Date.now());
-  broadcast({ type: 'typing', chatId, username: currentUser.username });
   clearTimeout(typingTimer);
   typingTimer = setTimeout(() => {
     DB.clearTyping(chatId, currentUser.username);
@@ -938,7 +924,7 @@ function createGroup() {
   groups[id] = group;
   DB.set('groups', groups);
 
-  DB.addMessage(`group_${id}`, {
+  DB.addMessage(`msgs_group_${id}`, {
     id: genId(), type: 'system',
     content: `Groupe "${name}" créé par ${currentUser.displayName}`,
     timestamp: Date.now()
@@ -1064,7 +1050,7 @@ function kickFromGroup(groupId, username) {
   g.admins = (g.admins || []).filter(u => u !== username);
   DB.set('groups', groups);
 
-  DB.addMessage(`group_${groupId}`, {
+  DB.addMessage(`msgs_group_${groupId}`, {
     id: genId(), type: 'system',
     content: `${username} a été exclu du groupe`,
     timestamp: Date.now()
@@ -1649,7 +1635,7 @@ function markRead(chatId) {
 function getUnreadCount(chatId) {
   const reads = getReads();
   const lastRead = reads[currentUser?.username]?.[chatId] || 0;
-  const msgs = DB.messages(chatId);
+  const msgs = _cache[chatId] || [];
   return msgs.filter(m => m.timestamp > lastRead && m.sender !== currentUser?.username && m.type !== 'system').length;
 }
 
@@ -1749,15 +1735,8 @@ function scrollToBottom() {
   if (c) c.scrollTop = c.scrollHeight;
 }
 
-// ===== START =====
-window.addEventListener('load', init);
 
-// Cross-tab sync via storage event
-window.addEventListener('storage', (e) => {
-  if (e.key === `${APP_KEY}_ping`) {
-    if (currentChat) renderMessages();
-    renderGroups();
-    renderPrivateChats();
-    renderUsers();
-  }
-});
+// ===== START =====
+// Firebase gère la synchronisation en temps réel entre tous les appareils.
+// Plus besoin de BroadcastChannel ou d'événements storage.
+window.addEventListener('load', init);
