@@ -282,6 +282,18 @@ function showRegister() {
   clearAuthError();
 }
 
+function showBanScreen(ban) {
+  document.getElementById('auth-screen').classList.remove('active');
+  document.getElementById('app-screen').classList.remove('active');
+  const bs = document.getElementById('ban-screen');
+  if (bs) {
+    bs.classList.add('active');
+    document.getElementById('ban-reason-text').textContent = ban.reason || 'Aucune raison précisée';
+    document.getElementById('ban-date').textContent =
+      `Banni le ${new Date(ban.bannedAt).toLocaleDateString('fr-FR')} par ${ban.bannedBy}`;
+  }
+}
+
 function showAuthError(msg) {
   const el = document.getElementById('auth-error');
   el.textContent = msg;
@@ -302,10 +314,10 @@ function login() {
   if (!user) return showAuthError('Utilisateur introuvable');
   if (user.password !== btoa(password)) return showAuthError('Mot de passe incorrect');
 
-  // Vérification ban
+  // Vérification ban → écran dédié
   if (DB.isBanned(username)) {
-    const ban = DB.bans()[username];
-    return showAuthError(`🚫 Compte banni — Raison : ${ban.reason}`);
+    showBanScreen(DB.bans()[username]);
+    return;
   }
 
   currentUser = user;
@@ -359,15 +371,17 @@ function register() {
 function logout() {
   if (currentUser) {
     DB.clearTyping(currentChat?.id ? `${currentChat.type}_${currentChat.id}` : '', currentUser.username);
-    broadcast({ type: 'user_left', username: currentUser.username });
   }
   currentUser = null;
   currentChat = null;
   sessionStorage.clear();
   clearInterval(pollTimer);
-  showAuth();
+  document.getElementById('ban-screen').classList.remove('active');
+  document.getElementById('app-screen').classList.remove('active');
+  document.getElementById('auth-screen').classList.add('active');
   document.getElementById('login-username').value = '';
   document.getElementById('login-password').value = '';
+  showLogin();
 }
 
 function enterApp() {
@@ -512,18 +526,25 @@ function renderUsers(filter = '') {
 
   for (const user of all) {
     const banned = bans[user.username];
+    const label = user.label ? renderLabel(user.label) : '';
+    const isAdmin = currentUser.role === 'admin';
     const item = document.createElement('div');
     item.className = 'conv-item';
     item.onclick = () => startPM(user.username);
     item.innerHTML = `
-      <div class="avatar sm" style="background:${user.color || '#6c63ff'};${banned ? 'filter:grayscale(1);opacity:0.5' : ''}">${(user.displayName || user.username)[0].toUpperCase()}</div>
+      <div class="avatar sm" style="background:${user.color||'#6c63ff'};${banned?'filter:grayscale(1);opacity:0.5':''}">${(user.displayName||user.username)[0].toUpperCase()}</div>
       <div class="conv-body">
-        <div class="conv-name" style="${banned ? 'text-decoration:line-through;color:var(--text3)' : ''}">${escHtml(user.displayName || user.username)}${banned ? ' <span style="font-size:10px;color:var(--red)">🚫</span>' : ''}</div>
-        <div class="conv-preview text-muted" style="font-size:11px;font-family:var(--font-mono)">${user.role === 'admin' ? '👑 Admin' : '@' + user.username}</div>
+        <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-weight:600;font-size:13px;${banned?'text-decoration:line-through;color:var(--text3)':''}">
+          ${escHtml(user.displayName||user.username)}
+          ${banned?'<span style="font-size:10px;color:var(--red)">🚫</span>':''}
+          ${label}
+        </div>
+        <div class="conv-preview text-muted" style="font-size:11px;font-family:var(--font-mono)">${user.role==='admin'?'👑 Admin':'@'+user.username}</div>
       </div>
       <div class="conv-meta" style="flex-direction:row;gap:2px;align-items:center">
-        ${!banned ? `<button class="icon-btn small" onclick="event.stopPropagation();startPM('${user.username}')" title="Message privé" style="font-size:14px">✉</button>` : ''}
-        ${user.role !== 'admin' ? `<button class="icon-btn small" onclick="event.stopPropagation();showReportModal('${user.username}')" title="Signaler" style="font-size:13px">🚩</button>` : ''}
+        ${!banned?`<button class="icon-btn small" onclick="event.stopPropagation();startPM('${user.username}')" title="Message privé" style="font-size:14px">✉</button>`:''}
+        ${user.role!=='admin'?`<button class="icon-btn small" onclick="event.stopPropagation();showReportModal('${user.username}')" title="Signaler" style="font-size:13px">🚩</button>`:''}
+        ${isAdmin&&user.role!=='admin'?`<button class="icon-btn small" onclick="event.stopPropagation();showSetLabelModal('${user.username}')" title="Étiquette" style="font-size:13px">🏷</button>`:''}
       </div>
     `;
     container.appendChild(item);
@@ -667,9 +688,11 @@ function renderMessageGroup(group) {
   if (!isOwn) {
     const header = document.createElement('div');
     header.className = 'msg-header';
+    const labelHtml = sender?.label ? getLabelHtml(sender.label) : '';
     header.innerHTML = `
       <div class="avatar" style="width:28px;height:28px;font-size:12px;background:${sender?.color || '#6c63ff'}">${(sender?.displayName || group.sender)[0].toUpperCase()}</div>
       <span class="msg-sender">${escHtml(sender?.displayName || group.sender)}</span>
+      ${labelHtml}
       <span class="msg-time">${formatTime(group.msgs[0].timestamp)}</span>
     `;
     el.appendChild(header);
@@ -1182,6 +1205,14 @@ function updateAdminAlertDot() {
   const reports = reportsDB().filter(r => r.status === 'pending');
   const dot = document.getElementById('admin-alert-dot');
   if (dot) dot.classList.toggle('hidden', reports.length === 0);
+
+  // Vérifie aussi les demandes admin
+  if (window.FBDB) {
+    window.FBDB.ref('admin_requests').orderByChild('status').equalTo('pending').once('value', snap => {
+      const hasReqs = snap.numChildren() > 0;
+      if (dot) dot.classList.toggle('hidden', reports.length === 0 && !hasReqs);
+    });
+  }
 }
 
 // ===== ADMIN PANEL =====
@@ -1780,34 +1811,238 @@ function scrollToBottom() {
 
 
 
+// ===== DEMANDE À L'ADMIN =====
+function showRequestToAdmin() {
+  const el = document.createElement('div');
+  el.innerHTML = `
+    <p style="color:var(--text2);font-size:13px;margin-bottom:16px">Envoie une demande à l'administrateur. Il recevra une notification dans son panneau.</p>
+    <div class="form-group">
+      <label>Type de demande</label>
+      <select id="req-type">
+        <option value="create_group">💬 Créer un groupe de discussion</option>
+        <option value="join_group">🚪 Rejoindre un groupe existant</option>
+        <option value="delete_message">🗑 Supprimer un message</option>
+        <option value="custom_label">🏷 Obtenir une étiquette personnalisée</option>
+        <option value="other">❓ Autre demande</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Détails</label>
+      <textarea id="req-details" placeholder="Décris ta demande en détail..."></textarea>
+    </div>
+  `;
+  openModal('📬 Demande à l\'admin', el, [
+    { label: 'Annuler', cls: 'btn-cancel', action: closeModal },
+    { label: 'Envoyer', cls: 'btn-confirm', action: submitAdminRequest }
+  ]);
+}
+
+function submitAdminRequest() {
+  const type = document.getElementById('req-type').value;
+  const details = document.getElementById('req-details').value.trim();
+  if (!details) return toast('Décris ta demande', 'error');
+
+  const typeLabels = {
+    create_group: 'Créer un groupe',
+    join_group: 'Rejoindre un groupe',
+    delete_message: 'Supprimer un message',
+    custom_label: 'Étiquette personnalisée',
+    other: 'Autre'
+  };
+
+  const req = {
+    id: genId(),
+    from: currentUser.username,
+    type,
+    typeLabel: typeLabels[type],
+    details,
+    timestamp: Date.now(),
+    status: 'pending'
+  };
+
+  if (window.FBDB) {
+    window.FBDB.ref('admin_requests').push(req);
+  }
+  closeModal();
+  toast('Demande envoyée à l\'admin ✅', 'success');
+}
+
+// ===== ÉTIQUETTES MEMBRES =====
+const LABEL_COLORS = {
+  vip:     { bg: '#f59e0b22', border: '#f59e0b', text: '#f59e0b', icon: '⭐' },
+  mod:     { bg: '#8b5cf622', border: '#8b5cf6', text: '#8b5cf6', icon: '🛡' },
+  dev:     { bg: '#06b6d422', border: '#06b6d4', text: '#06b6d4', icon: '💻' },
+  helper:  { bg: '#22c55e22', border: '#22c55e', text: '#22c55e', icon: '🤝' },
+  banned:  { bg: '#ef444422', border: '#ef4444', text: '#ef4444', icon: '🚫' },
+  new:     { bg: '#6c63ff22', border: '#6c63ff', text: '#6c63ff', icon: '🆕' },
+  custom:  { bg: '#ec489922', border: '#ec4899', text: '#ec4899', icon: '🏷' },
+};
+
+function getUserLabel(username) {
+  const users = DB.users();
+  return users[username]?.label || null;
+}
+
+function renderLabel(label) {
+  if (!label) return '';
+  const style = LABEL_COLORS[label.type] || LABEL_COLORS.custom;
+  return `<span class="member-label" style="background:${style.bg};border:1px solid ${style.border};color:${style.text}">${style.icon} ${escHtml(label.text)}</span>`;
+}
+
+function showSetLabelModal(username) {
+  if (currentUser.role !== 'admin') return;
+  const users = DB.users();
+  const u = users[username];
+  const current = u?.label;
+
+  const el = document.createElement('div');
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;padding:10px;background:var(--bg2);border-radius:8px">
+      <div class="avatar sm" style="background:${u?.color||'#6c63ff'}">${(u?.displayName||username)[0].toUpperCase()}</div>
+      <div>
+        <div style="font-weight:600">${escHtml(u?.displayName||username)}</div>
+        <div style="font-size:11px;color:var(--text3)">@${username}</div>
+      </div>
+      ${current ? renderLabel(current) : ''}
+    </div>
+    <div class="form-group">
+      <label>Type d'étiquette</label>
+      <select id="label-type" onchange="updateLabelPreview()">
+        <option value="">-- Aucune étiquette --</option>
+        <option value="vip" ${current?.type==='vip'?'selected':''}>⭐ VIP</option>
+        <option value="mod" ${current?.type==='mod'?'selected':''}>🛡 Modérateur</option>
+        <option value="dev" ${current?.type==='dev'?'selected':''}>💻 Développeur</option>
+        <option value="helper" ${current?.type==='helper'?'selected':''}>🤝 Helper</option>
+        <option value="new" ${current?.type==='new'?'selected':''}>🆕 Nouveau</option>
+        <option value="custom" ${current?.type==='custom'?'selected':''}>🏷 Personnalisée</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Texte de l'étiquette</label>
+      <input type="text" id="label-text" value="${escHtml(current?.text||'')}" placeholder="Ex: VIP, Staff, etc." maxlength="20">
+    </div>
+    <div id="label-preview" style="margin-top:8px"></div>
+  `;
+  openModal(`🏷 Étiquette de ${u?.displayName||username}`, el, [
+    { label: 'Supprimer l\'étiquette', cls: 'btn-danger', action: () => removeLabel(username) },
+    { label: 'Annuler', cls: 'btn-cancel', action: closeModal },
+    { label: 'Appliquer', cls: 'btn-confirm', action: () => applyLabel(username) }
+  ]);
+  setTimeout(updateLabelPreview, 50);
+}
+
+function updateLabelPreview() {
+  const type = document.getElementById('label-type')?.value;
+  const text = document.getElementById('label-text')?.value.trim();
+  const prev = document.getElementById('label-preview');
+  if (!prev) return;
+  if (!type || !text) { prev.innerHTML = ''; return; }
+  prev.innerHTML = `<span style="font-size:12px;color:var(--text3)">Aperçu : </span>${renderLabel({type, text})}`;
+}
+
+function applyLabel(username) {
+  const type = document.getElementById('label-type').value;
+  const text = document.getElementById('label-text').value.trim();
+  if (!type || !text) return removeLabel(username);
+  const users = DB.users();
+  users[username].label = { type, text };
+  DB.set('users', users);
+  closeModal();
+  toast(`Étiquette "${text}" appliquée à @${username}`, 'success');
+  renderUsers();
+}
+
+function removeLabel(username) {
+  const users = DB.users();
+  if (users[username]) delete users[username].label;
+  DB.set('users', users);
+  closeModal();
+  toast(`Étiquette supprimée pour @${username}`, 'info');
+  renderUsers();
+}
+
+// ===== ADMIN: VOIR LES DEMANDES =====
+function showAdminRequests() {
+  if (currentUser.role !== 'admin') return;
+
+  const loadReqs = () => {
+    if (!window.FBDB) return;
+    window.FBDB.ref('admin_requests').once('value', snap => {
+      const raw = snap.val();
+      const reqs = raw ? Object.entries(raw).map(([k,v]) => ({...v, _key: k})) : [];
+      const el = document.createElement('div');
+
+      if (reqs.length === 0) {
+        el.innerHTML = '<p style="text-align:center;color:var(--text3);padding:20px 0;font-size:13px">Aucune demande en attente</p>';
+      } else {
+        el.innerHTML = [...reqs].reverse().map(r => `
+          <div class="report-card ${r.status}" style="margin-bottom:8px">
+            <div class="report-header">
+              <span class="report-status-tag ${r.status}">${r.status==='pending'?'⏳ En attente':r.status==='done'?'✅ Traité':'❌ Rejeté'}</span>
+              <span style="font-size:11px;color:var(--text3)">${formatTime(r.timestamp)}</span>
+            </div>
+            <div style="margin:6px 0;font-size:13px">
+              <strong style="color:var(--accent2)">${escHtml(getDisplayName(r.from))}</strong>
+              <span style="color:var(--text3)"> demande : </span>
+              <strong>${escHtml(r.typeLabel)}</strong>
+            </div>
+            <div style="font-size:12px;color:var(--text2);font-style:italic">"${escHtml(r.details)}"</div>
+            ${r.status==='pending' ? `
+              <div style="display:flex;gap:6px;margin-top:10px">
+                <button class="btn-sm-accent" onclick="resolveRequest('${r._key}','done')">✅ Marquer traité</button>
+                <button style="background:var(--bg3);color:var(--text3);border:none;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px" onclick="resolveRequest('${r._key}','rejected')">Rejeter</button>
+              </div>
+            ` : ''}
+          </div>
+        `).join('');
+      }
+      openModal('📬 Demandes des membres', el, [
+        { label: 'Fermer', cls: 'btn-cancel', action: closeModal }
+      ]);
+    });
+  };
+  loadReqs();
+}
+
+function resolveRequest(key, status) {
+  if (!window.FBDB) return;
+  window.FBDB.ref(`admin_requests/${key}`).update({ status });
+  closeModal();
+  setTimeout(showAdminRequests, 200);
+  toast(status === 'done' ? 'Demande marquée traitée' : 'Demande rejetée', 'info');
+  updateAdminAlertDot();
+}
+
+// ===== ADMIN: SUPPRESSION MESSAGE/GROUPE =====
+function adminDeleteMessage(msgId, chatId) {
+  if (currentUser.role !== 'admin') return;
+  if (!window.FBDB) return;
+  window.FBDB.ref(chatId).orderByChild('id').equalTo(msgId).once('value', snap => {
+    snap.forEach(child => child.ref.remove());
+  });
+  toast('Message supprimé', 'info');
+}
+
 // ===== START =====
 window.addEventListener('load', init);
 
-// ===== EXPORT GLOBAL — requis pour les onclick dans le HTML =====
+// ===== EXPORT GLOBAL =====
 Object.assign(window, {
-  // Auth
   login, register, logout, showLogin, showRegister,
-  // App
   showProfile, toggleNotifications,
-  // Sidebar
   switchTab, filterConversations,
-  // Chat
   openChat, hideChatMobile, sendMessage, handleKey, autoResize,
-  sendTyping, deleteMessage, addReaction, addReactionEmoji, toggleEmoji,
-  // Groups
+  sendTyping, deleteMessage, adminDeleteMessage, addReaction, addReactionEmoji, toggleEmoji,
   showCreateGroup, showGroupManage, saveGroupEdit,
   toggleGroupAdmin, kickFromGroup, deleteGroup,
-  // Private messages
   startPM, showNewPM,
-  // Info panel
   toggleChatInfo,
-  // Admin
   showAdminPanel, switchAdminTab, handleReport,
   confirmDeleteUser, deleteUserAccount,
-  // Ban
   banUser, unbanUser, promptBan, showBanPanel,
-  // Reports
   showReportModal,
-  // Modal
+  showRequestToAdmin, submitAdminRequest,
+  showSetLabelModal, applyLabel, removeLabel, updateLabelPreview,
+  showAdminRequests, resolveRequest,
   openModal, closeModal,
 });
