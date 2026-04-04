@@ -1,4 +1,3 @@
-//version finale
 // ============================================================
 // NexChat — Backend Firebase Realtime Database
 // firebase SDK chargé dans index.html → window.FBDB
@@ -79,22 +78,24 @@ const DB = {
 };
 
 // ===== FIREBASE LISTENERS =====
-// Écoute tous les chemins Firebase et met à jour le cache mémoire en temps réel
 function startFirebaseListeners() {
   if (!window.FBDB) return;
   const db = window.FBDB;
 
-  const paths = ['users', 'groups', 'bans', 'typing', 'reports'];
-
-  paths.forEach(path => {
+  // Écoute les données structurelles en temps réel
+  ['users', 'groups', 'bans', 'typing'].forEach(path => {
     db.ref(path).on('value', snap => {
-      _cache[path] = snap.val() || (path === 'reports' ? [] : {});
+      _cache[path] = snap.val() || {};
       refreshUI();
     });
   });
 
-  // Écoute les messages du chat courant
-  listenCurrentChat();
+  // Reports : stocké comme objet Firebase → converti en tableau
+  db.ref('reports').on('value', snap => {
+    const raw = snap.val();
+    _cache['reports'] = raw ? Object.values(raw) : [];
+    refreshUI();
+  });
 }
 
 let _chatListener = null;
@@ -131,31 +132,55 @@ function refreshUI() {
 
 // ===== INIT =====
 function init() {
-  // Abonne les listeners Firebase avant tout
-  startFirebaseListeners();
-
-  // Attendre que Firebase charge les données initiales
-  if (window.FBDB) {
-    showLoadingScreen();
-    // On attend le premier snapshot 'users' pour savoir si la DB est vide
-    window.FBDB.ref('users').once('value').then(snap => {
-      _cache['users'] = snap.val() || {};
-      window.FBDB.ref('groups').once('value').then(snapG => {
-        _cache['groups'] = snapG.val() || {};
-        initDefaultData();
-        checkSession();
-        hideLoadingScreen();
-      });
-    }).catch(() => {
-      initDefaultData();
-      checkSession();
-      hideLoadingScreen();
-    });
-  } else {
+  // Sécurité : attend que Firebase SDK soit prêt
+  if (typeof firebase === 'undefined' || !window.FBDB) {
+    console.error('❌ Firebase non chargé — vérifie index.html');
+    // Fallback : mode dégradé sans Firebase
     initDefaultData();
     checkSession();
+    return;
   }
+
+  console.log('✅ Firebase connecté :', window.FBDB.app.options.databaseURL);
+  showLoadingScreen();
+
+  // Charge users et groups avant d'afficher quoi que ce soit
+  Promise.all([
+    window.FBDB.ref('users').once('value'),
+    window.FBDB.ref('groups').once('value'),
+    window.FBDB.ref('bans').once('value'),
+    window.FBDB.ref('reports').once('value'),
+  ]).then(([snapU, snapG, snapB, snapR]) => {
+    _cache['users']   = snapU.val() || {};
+    _cache['groups']  = snapG.val() || {};
+    _cache['bans']    = snapB.val() || {};
+    _cache['reports'] = snapR.val() ? Object.values(snapR.val()) : [];
+
+    initDefaultData();
+    checkSession();
+    startFirebaseListeners(); // Lance les listeners temps réel après le chargement initial
+    hideLoadingScreen();
+  }).catch(err => {
+    console.error('❌ Erreur Firebase :', err);
+    hideLoadingScreen();
+    showLoadingError(err.message);
+  });
 }
+
+function showLoadingError(msg) {
+  const el = document.getElementById('loading-screen') || document.createElement('div');
+  el.id = 'loading-screen';
+  el.style.cssText = 'position:fixed;inset:0;background:#0a0a0f;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:9999;gap:12px;color:#9999b0;font-family:sans-serif;padding:24px;text-align:center';
+  el.innerHTML = `
+    <div style="font-size:36px">❌</div>
+    <div style="font-size:16px;color:#e8e8f0">Erreur de connexion Firebase</div>
+    <div style="font-size:13px;color:#ef4444;background:#1e1e28;padding:10px 16px;border-radius:8px;max-width:400px;word-break:break-all">${msg}</div>
+    <div style="font-size:13px">Vérifie :<br>• Les règles Firebase (mode test activé ?)<br>• Ta connexion internet<br>• La console F12 pour plus de détails</div>
+    <button onclick="location.reload()" style="background:#6c63ff;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:14px;margin-top:8px">Réessayer</button>
+  `;
+  document.body.appendChild(el);
+}
+
 
 function showLoadingScreen() {
   let el = document.getElementById('loading-screen');
@@ -1076,10 +1101,13 @@ function deleteGroup(groupId) {
 }
 
 // ===== REPORT SYSTEM =====
-function reportsDB() { return DB.get('reports', []); }
+function reportsDB() {
+  // _cache['reports'] est toujours un tableau (converti dans le listener)
+  const r = _cache['reports'];
+  return Array.isArray(r) ? r : (r ? Object.values(r) : []);
+}
 
 function submitReport(reportedUsername, reason, details) {
-  const reports = reportsDB();
   const report = {
     id: genId(),
     reportedBy: currentUser.username,
@@ -1087,11 +1115,15 @@ function submitReport(reportedUsername, reason, details) {
     reason,
     details: details || '',
     timestamp: Date.now(),
-    status: 'pending' // pending | reviewed | dismissed
+    status: 'pending'
   };
-  reports.push(report);
-  DB.set('reports', reports);
-  broadcast({ type: 'new_report' });
+  if (window.FBDB) {
+    window.FBDB.ref('reports').push(report);
+  } else {
+    const reports = reportsDB();
+    reports.push(report);
+    _cache['reports'] = reports;
+  }
   updateAdminAlertDot();
   toast('Signalement envoyé aux admins', 'success');
 }
@@ -1271,18 +1303,21 @@ function switchAdminTab(tab, btn) {
 }
 
 function handleReport(reportId, action) {
-  const reports = reportsDB();
-  const report = reports.find(r => r.id === reportId);
-  if (!report) return;
+  if (!window.FBDB) return;
 
   if (action === 'ban') {
-    report.status = 'reviewed';
-    DB.set('reports', reports);
+    // Trouve la clé Firebase du report et met à jour son statut
+    window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
+      snap.forEach(child => child.ref.update({ status: 'reviewed' }));
+    });
     closeModal();
-    promptBan(report.reportedUser);
+    // Trouve le report dans le cache pour obtenir reportedUser
+    const report = reportsDB().find(r => r.id === reportId);
+    if (report) promptBan(report.reportedUser);
   } else {
-    report.status = action;
-    DB.set('reports', reports);
+    window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
+      snap.forEach(child => child.ref.update({ status: action }));
+    });
     updateAdminAlertDot();
     closeModal();
     showAdminPanel();
@@ -1336,9 +1371,17 @@ function deleteUserAccount(username) {
   // Remove from bans
   DB.unbanUser(username);
 
-  // Clean reports about/by this user
-  const reports = reportsDB().filter(r => r.reportedBy !== username && r.reportedUser !== username);
-  DB.set('reports', reports);
+  // Supprime les reports liés à cet utilisateur dans Firebase
+  if (window.FBDB) {
+    window.FBDB.ref('reports').once('value', snap => {
+      snap.forEach(child => {
+        const r = child.val();
+        if (r.reportedBy === username || r.reportedUser === username) {
+          child.ref.remove();
+        }
+      });
+    });
+  }
 
   broadcast({ type: 'user_deleted', username });
   renderGroups();
@@ -1736,7 +1779,35 @@ function scrollToBottom() {
 }
 
 
+
 // ===== START =====
-// Firebase gère la synchronisation en temps réel entre tous les appareils.
-// Plus besoin de BroadcastChannel ou d'événements storage.
 window.addEventListener('load', init);
+
+// ===== EXPORT GLOBAL — requis pour les onclick dans le HTML =====
+Object.assign(window, {
+  // Auth
+  login, register, logout, showLogin, showRegister,
+  // App
+  showProfile, toggleNotifications,
+  // Sidebar
+  switchTab, filterConversations,
+  // Chat
+  openChat, hideChatMobile, sendMessage, handleKey, autoResize,
+  sendTyping, deleteMessage, addReaction, addReactionEmoji, toggleEmoji,
+  // Groups
+  showCreateGroup, showGroupManage, saveGroupEdit,
+  toggleGroupAdmin, kickFromGroup, deleteGroup,
+  // Private messages
+  startPM, showNewPM,
+  // Info panel
+  toggleChatInfo,
+  // Admin
+  showAdminPanel, switchAdminTab, handleReport,
+  confirmDeleteUser, deleteUserAccount,
+  // Ban
+  banUser, unbanUser, promptBan, showBanPanel,
+  // Reports
+  showReportModal,
+  // Modal
+  openModal, closeModal,
+});
