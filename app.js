@@ -10,6 +10,8 @@ let currentUser = null;
 let currentChat = null;
 let typingTimer = null;
 let pollTimer = null;
+let _firebaseConnected = false;
+let _structuralListenersActive = false;
 
 // ===== FIREBASE HELPERS =====
 // Toutes les données vivent dans Firebase.
@@ -79,14 +81,30 @@ const DB = {
 
 // ===== FIREBASE LISTENERS =====
 function startFirebaseListeners() {
-  if (!window.FBDB) return;
+  if (!window.FBDB || _structuralListenersActive) return;
   const db = window.FBDB;
+  _structuralListenersActive = true;
+
+  // Connexion / déconnexion Firebase
+  db.ref('.info/connected').on('value', snap => {
+    const wasConnected = _firebaseConnected;
+    _firebaseConnected = !!snap.val();
+    if (_firebaseConnected && !wasConnected) {
+      console.log('🔗 Firebase connecté');
+      hideConnectionBanner();
+    } else if (!_firebaseConnected && wasConnected) {
+      console.warn('⚠️ Firebase déconnecté — reconnexion automatique…');
+      showConnectionBanner();
+    }
+  });
 
   // Écoute les données structurelles en temps réel
   ['users', 'groups', 'bans', 'typing'].forEach(path => {
     db.ref(path).on('value', snap => {
       _cache[path] = snap.val() || {};
       refreshUI();
+    }, err => {
+      console.error(`Firebase listener error [${path}]:`, err);
     });
   });
 
@@ -95,7 +113,36 @@ function startFirebaseListeners() {
     const raw = snap.val();
     _cache['reports'] = raw ? Object.values(raw) : [];
     refreshUI();
+  }, err => {
+    console.error('Firebase listener error [reports]:', err);
   });
+}
+
+function stopFirebaseListeners() {
+  if (!window.FBDB || !_structuralListenersActive) return;
+  const db = window.FBDB;
+  db.ref('.info/connected').off();
+  ['users', 'groups', 'bans', 'typing', 'reports'].forEach(path => {
+    db.ref(path).off();
+  });
+  _structuralListenersActive = false;
+}
+
+function showConnectionBanner() {
+  let banner = document.getElementById('connection-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'connection-banner';
+    banner.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ef4444;color:white;text-align:center;padding:6px 12px;font-size:13px;z-index:10000;font-family:sans-serif';
+    document.body.appendChild(banner);
+  }
+  banner.textContent = '⚠️ Connexion perdue — reconnexion en cours…';
+  banner.style.display = 'block';
+}
+
+function hideConnectionBanner() {
+  const banner = document.getElementById('connection-banner');
+  if (banner) banner.style.display = 'none';
 }
 
 let _chatListener = null;
@@ -106,9 +153,7 @@ function listenCurrentChat() {
   const chatId = `msgs_${currentChat.type}_${currentChat.id}`;
 
   // Détache l'ancien listener
-  if (_chatListenerPath && _chatListener) {
-    window.FBDB.ref(_chatListenerPath).off('value', _chatListener);
-  }
+  detachChatListener();
 
   _chatListenerPath = chatId;
   _chatListener = window.FBDB.ref(chatId).on('value', snap => {
@@ -117,7 +162,17 @@ function listenCurrentChat() {
     _cache[chatId] = raw ? Object.values(raw).sort((a, b) => a.timestamp - b.timestamp) : [];
     renderMessages();
     markRead(chatId);
+  }, err => {
+    console.error(`Firebase chat listener error [${chatId}]:`, err);
   });
+}
+
+function detachChatListener() {
+  if (_chatListenerPath && _chatListener) {
+    window.FBDB.ref(_chatListenerPath).off('value', _chatListener);
+  }
+  _chatListener = null;
+  _chatListenerPath = null;
 }
 
 function refreshUI() {
@@ -372,6 +427,8 @@ function logout() {
   if (currentUser) {
     DB.clearTyping(currentChat?.id ? `${currentChat.type}_${currentChat.id}` : '', currentUser.username);
   }
+  detachChatListener();
+  stopFirebaseListeners();
   currentUser = null;
   currentChat = null;
   sessionStorage.clear();
@@ -623,6 +680,7 @@ function openChat(type, id, pmPartner = null) {
 function hideChatMobile() {
   document.getElementById('sidebar').classList.remove('hidden-mobile');
   document.getElementById('chat-area').classList.add('hidden');
+  detachChatListener();
   currentChat = null;
 }
 
@@ -800,7 +858,7 @@ function deleteMessage(msgId) {
     // Cherche la clé Firebase du message (format push)
     window.FBDB.ref(fbChatId).orderByChild('id').equalTo(msgId).once('value', snap => {
       snap.forEach(child => child.ref.remove());
-    });
+    }).catch(e => console.error('Delete message error:', e));
   }
 }
 
@@ -834,7 +892,7 @@ function addReactionEmoji(msgId, emoji) {
       }
       child.ref.update({ reactions });
     });
-  });
+  }).catch(e => console.error('Add reaction error:', e));
 }
 
 // ===== EMOJI PICKER =====
@@ -1211,7 +1269,7 @@ function updateAdminAlertDot() {
     window.FBDB.ref('admin_requests').orderByChild('status').equalTo('pending').once('value', snap => {
       const hasReqs = snap.numChildren() > 0;
       if (dot) dot.classList.toggle('hidden', reports.length === 0 && !hasReqs);
-    });
+    }).catch(e => console.error('Admin alert check error:', e));
   }
 }
 
@@ -1340,7 +1398,7 @@ function handleReport(reportId, action) {
     // Trouve la clé Firebase du report et met à jour son statut
     window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
       snap.forEach(child => child.ref.update({ status: 'reviewed' }));
-    });
+    }).catch(e => console.error('Handle report error:', e));
     closeModal();
     // Trouve le report dans le cache pour obtenir reportedUser
     const report = reportsDB().find(r => r.id === reportId);
@@ -1348,7 +1406,7 @@ function handleReport(reportId, action) {
   } else {
     window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
       snap.forEach(child => child.ref.update({ status: action }));
-    });
+    }).catch(e => console.error('Handle report error:', e));
     updateAdminAlertDot();
     closeModal();
     showAdminPanel();
@@ -1411,7 +1469,7 @@ function deleteUserAccount(username) {
           child.ref.remove();
         }
       });
-    });
+    }).catch(e => console.error('Delete user reports error:', e));
   }
 
   broadcast({ type: 'user_deleted', username });
@@ -2019,12 +2077,24 @@ function adminDeleteMessage(msgId, chatId) {
   if (!window.FBDB) return;
   window.FBDB.ref(chatId).orderByChild('id').equalTo(msgId).once('value', snap => {
     snap.forEach(child => child.ref.remove());
-  });
+  }).catch(e => console.error('Admin delete message error:', e));
   toast('Message supprimé', 'info');
 }
 
 // ===== START =====
 window.addEventListener('load', init);
+
+// ===== VISIBILITY CHANGE — pause/resume listeners =====
+document.addEventListener('visibilitychange', () => {
+  if (!window.FBDB) return;
+  if (document.hidden) {
+    // Tab cachée → on peut désactiver goOnline pour économiser la bande passante
+    // Firebase se reconnectera automatiquement quand l'onglet redevient visible
+    window.FBDB.goOffline();
+  } else {
+    window.FBDB.goOnline();
+  }
+});
 
 // ===== EXPORT GLOBAL =====
 Object.assign(window, {
