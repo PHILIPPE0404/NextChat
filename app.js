@@ -87,6 +87,9 @@ function startFirebaseListeners() {
     db.ref(path).on('value', snap => {
       _cache[path] = snap.val() || {};
       refreshUI();
+    }, err => {
+      console.error(`Firebase listener error on "${path}":`, err);
+      toast(`Erreur de synchronisation (${path})`, 'error');
     });
   });
 
@@ -95,6 +98,18 @@ function startFirebaseListeners() {
     const raw = snap.val();
     _cache['reports'] = raw ? Object.values(raw) : [];
     refreshUI();
+  }, err => {
+    console.error('Firebase listener error on "reports":', err);
+    toast('Erreur de synchronisation (reports)', 'error');
+  });
+
+  // Surveille l'état de connexion Firebase
+  db.ref('.info/connected').on('value', snap => {
+    if (snap.val() === true) {
+      console.log('Firebase connected');
+    } else {
+      console.warn('Firebase disconnected — data may be stale');
+    }
   });
 }
 
@@ -117,6 +132,9 @@ function listenCurrentChat() {
     _cache[chatId] = raw ? Object.values(raw).sort((a, b) => a.timestamp - b.timestamp) : [];
     renderMessages();
     markRead(chatId);
+  }, err => {
+    console.error(`Firebase chat listener error on "${chatId}":`, err);
+    toast('Erreur de chargement des messages', 'error');
   });
 }
 
@@ -201,13 +219,18 @@ function hideLoadingScreen() {
 function checkSession() {
   const saved = sessionStorage.getItem('nexchat_session');
   if (saved) {
-    const s = JSON.parse(saved);
-    const users = DB.users();
-    if (users[s.username]) {
-      currentUser = users[s.username];
-      sessionStorage.setItem('nexchat_session', JSON.stringify(currentUser));
-      enterApp();
-      return;
+    try {
+      const s = JSON.parse(saved);
+      const users = DB.users();
+      if (users[s.username]) {
+        currentUser = users[s.username];
+        sessionStorage.setItem('nexchat_session', JSON.stringify(currentUser));
+        enterApp();
+        return;
+      }
+    } catch (e) {
+      console.error('Corrupt session data, clearing:', e);
+      sessionStorage.removeItem('nexchat_session');
     }
   }
   showAuth();
@@ -799,7 +822,13 @@ function deleteMessage(msgId) {
   if (window.FBDB) {
     // Cherche la clé Firebase du message (format push)
     window.FBDB.ref(fbChatId).orderByChild('id').equalTo(msgId).once('value', snap => {
-      snap.forEach(child => child.ref.remove());
+      snap.forEach(child => {
+        child.ref.remove()
+          .catch(e => console.error('Firebase remove message error:', e));
+      });
+    }).catch(err => {
+      console.error('Firebase query error (deleteMessage):', err);
+      toast('Erreur lors de la suppression du message', 'error');
     });
   }
 }
@@ -832,8 +861,11 @@ function addReactionEmoji(msgId, emoji) {
       } else {
         reactions[currentUser.username] = emoji;
       }
-      child.ref.update({ reactions });
+      child.ref.update({ reactions })
+        .catch(e => console.error('Firebase update reaction error:', e));
     });
+  }).catch(err => {
+    console.error('Firebase query error (addReactionEmoji):', err);
   });
 }
 
@@ -1141,7 +1173,11 @@ function submitReport(reportedUsername, reason, details) {
     status: 'pending'
   };
   if (window.FBDB) {
-    window.FBDB.ref('reports').push(report);
+    window.FBDB.ref('reports').push(report)
+      .catch(err => {
+        console.error('Firebase push report error:', err);
+        toast('Erreur lors de l\'envoi du signalement', 'error');
+      });
   } else {
     const reports = reportsDB();
     reports.push(report);
@@ -1211,6 +1247,8 @@ function updateAdminAlertDot() {
     window.FBDB.ref('admin_requests').orderByChild('status').equalTo('pending').once('value', snap => {
       const hasReqs = snap.numChildren() > 0;
       if (dot) dot.classList.toggle('hidden', reports.length === 0 && !hasReqs);
+    }).catch(err => {
+      console.error('Firebase query error (updateAdminAlertDot):', err);
     });
   }
 }
@@ -1339,7 +1377,13 @@ function handleReport(reportId, action) {
   if (action === 'ban') {
     // Trouve la clé Firebase du report et met à jour son statut
     window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
-      snap.forEach(child => child.ref.update({ status: 'reviewed' }));
+      snap.forEach(child => {
+        child.ref.update({ status: 'reviewed' })
+          .catch(e => console.error('Firebase update report error:', e));
+      });
+    }).catch(err => {
+      console.error('Firebase query error (handleReport/ban):', err);
+      toast('Erreur lors du traitement du signalement', 'error');
     });
     closeModal();
     // Trouve le report dans le cache pour obtenir reportedUser
@@ -1347,7 +1391,13 @@ function handleReport(reportId, action) {
     if (report) promptBan(report.reportedUser);
   } else {
     window.FBDB.ref('reports').orderByChild('id').equalTo(reportId).once('value', snap => {
-      snap.forEach(child => child.ref.update({ status: action }));
+      snap.forEach(child => {
+        child.ref.update({ status: action })
+          .catch(e => console.error('Firebase update report error:', e));
+      });
+    }).catch(err => {
+      console.error('Firebase query error (handleReport):', err);
+      toast('Erreur lors du traitement du signalement', 'error');
     });
     updateAdminAlertDot();
     closeModal();
@@ -1408,9 +1458,12 @@ function deleteUserAccount(username) {
       snap.forEach(child => {
         const r = child.val();
         if (r.reportedBy === username || r.reportedUser === username) {
-          child.ref.remove();
+          child.ref.remove()
+            .catch(e => console.error('Firebase remove report error:', e));
         }
       });
+    }).catch(err => {
+      console.error('Firebase query error (deleteUserAccount/reports):', err);
     });
   }
 
@@ -1861,7 +1914,11 @@ function submitAdminRequest() {
   };
 
   if (window.FBDB) {
-    window.FBDB.ref('admin_requests').push(req);
+    window.FBDB.ref('admin_requests').push(req)
+      .catch(err => {
+        console.error('Firebase push admin request error:', err);
+        toast('Erreur lors de l\'envoi de la demande', 'error');
+      });
   }
   closeModal();
   toast('Demande envoyée à l\'admin ✅', 'success');
@@ -1999,6 +2056,9 @@ function showAdminRequests() {
       openModal('📬 Demandes des membres', el, [
         { label: 'Fermer', cls: 'btn-cancel', action: closeModal }
       ]);
+    }).catch(err => {
+      console.error('Firebase query error (showAdminRequests):', err);
+      toast('Erreur lors du chargement des demandes', 'error');
     });
   };
   loadReqs();
@@ -2006,7 +2066,11 @@ function showAdminRequests() {
 
 function resolveRequest(key, status) {
   if (!window.FBDB) return;
-  window.FBDB.ref(`admin_requests/${key}`).update({ status });
+  window.FBDB.ref(`admin_requests/${key}`).update({ status })
+    .catch(err => {
+      console.error('Firebase update admin request error:', err);
+      toast('Erreur lors de la mise à jour de la demande', 'error');
+    });
   closeModal();
   setTimeout(showAdminRequests, 200);
   toast(status === 'done' ? 'Demande marquée traitée' : 'Demande rejetée', 'info');
@@ -2018,7 +2082,13 @@ function adminDeleteMessage(msgId, chatId) {
   if (currentUser.role !== 'admin') return;
   if (!window.FBDB) return;
   window.FBDB.ref(chatId).orderByChild('id').equalTo(msgId).once('value', snap => {
-    snap.forEach(child => child.ref.remove());
+    snap.forEach(child => {
+      child.ref.remove()
+        .catch(e => console.error('Firebase admin remove message error:', e));
+    });
+  }).catch(err => {
+    console.error('Firebase query error (adminDeleteMessage):', err);
+    toast('Erreur lors de la suppression du message', 'error');
   });
   toast('Message supprimé', 'info');
 }
